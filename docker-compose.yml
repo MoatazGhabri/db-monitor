@@ -6,14 +6,14 @@ services:
     volumes:
       - dbhub-data:/app/data
     environment:
-      - PORT=3001
-    # No port exposed — nginx proxies to it internally
+      - PORT=3002
+    # No public port — nginx proxies to it internally
 
   dbhub:
     build: .
     container_name: dbhub-admin
     ports:
-      - "8080:80"
+      - "8090:80"
     restart: unless-stopped
     depends_on:
       - dbhub-server

@@ -281,7 +281,7 @@ app.post('/api/columns', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`DBHub local server running on port ${PORT}`);
   console.log(`SQLite database: ${DB_PATH}`);

@@ -32,12 +32,12 @@ cd dbhub
 docker compose up -d --build
 
 # 3. Access the platform
-# Open http://YOUR_VPS_IP:8080
+# Open http://YOUR_VPS_IP:8090
 ```
 
 That's it. Two containers start:
-- **dbhub-server** — Node.js API with SQLite (port 3001, internal only)
-- **dbhub-admin** — Nginx serving the frontend (port 8080, public)
+- **dbhub-server** — Node.js API with SQLite (port 3002, internal only)
+- **dbhub-admin** — Nginx serving the frontend (port 8090, public)
 
 Data is persisted in a Docker volume called `dbhub-data`. The SQLite file lives at `/app/data/dbhub.db` inside the server container.
 
@@ -58,7 +58,7 @@ docker run --rm -v dbhub-data:/data -v $(pwd):/backup alpine tar czf /backup/dbh
 
 ### Connecting your databases
 
-1. Open the platform at `http://YOUR_VPS_IP:8080`
+1. Open the platform at `http://YOUR_VPS_IP:8090`
 2. Go to **Databases** → **Connect Database**
 3. Enter your database details:
    - **Name**: A display name (e.g., `ecommerce_prod`)
