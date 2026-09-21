@@ -1,0 +1,25 @@
+services:
+  dbhub-server:
+    build: ./server
+    container_name: dbhub-server
+    restart: unless-stopped
+    volumes:
+      - dbhub-data:/app/data
+    environment:
+      - PORT=3001
+    # No port exposed — nginx proxies to it internally
+
+  dbhub:
+    build: .
+    container_name: dbhub-admin
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    depends_on:
+      - dbhub-server
+    environment:
+      - VITE_API_MODE=local
+      - VITE_LOCAL_API_URL=/api
+
+volumes:
+  dbhub-data:

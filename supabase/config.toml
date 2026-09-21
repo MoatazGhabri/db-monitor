@@ -1,0 +1,3 @@
+[functions.db-proxy]
+verify_jwt = false
+entrypoint = "./functions/db-proxy/index.ts"

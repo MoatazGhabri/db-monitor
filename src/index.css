@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #eceef1;
+}
+
+* { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: #191b1f;
+  font-feature-settings: 'cv02','cv03','cv04','cv11';
+}
+
+::selection { background: #2563eb22; }
+
+/* Scrollbars */
+* { scrollbar-width: thin; scrollbar-color: #d5d9e0 transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #d5d9e0; border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: #b0b8c4; }
+
+/* SQL editor */
+.sql-editor {
+  font-family: 'JetBrains Mono', monospace;
+  tab-size: 2;
+}
+.sql-editor textarea { caret-color: #2563eb; }
+
+/* Syntax token colors */
+.tok-key { color: #2563eb; font-weight: 600; }
+.tok-fn  { color: #7c3aed; }
+.tok-str { color: #059669; }
+.tok-num { color: #d97706; }
+.tok-cmt { color: #848f9e; font-style: italic; }
+.tok-op  { color: #515b67; }
+.tok-var { color: #191b1f; }
+
+/* Subtle grid background for charts */
+.grid-bg {
+  background-image: linear-gradient(to right, #eceef1 1px, transparent 1px),
+    linear-gradient(to bottom, #eceef1 1px, transparent 1px);
+  background-size: 24px 24px;
+}
