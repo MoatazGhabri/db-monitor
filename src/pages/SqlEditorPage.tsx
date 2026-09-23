@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Play, Save, Clock, CheckCircle2, AlertCircle, Copy, Download, Terminal, ChevronRight, Loader2, Server } from 'lucide-react';
 import { Card, Badge, Button, PageHeader } from '@/components/ui';
 import { fetchConnections, executeQuery, fetchQueryHistory, type DbConnection, type QueryResult, type QueryHistoryEntry } from '@/lib/api';
+import type { SqlDraft } from '@/lib/sqlTemplates';
 
 const SQL_KEYWORDS = new Set([
   'SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE',
@@ -73,13 +74,13 @@ GROUP BY u.name, u.email
 ORDER BY revenue DESC
 LIMIT 100;`;
 
-export function SqlEditorPage() {
-  const [query, setQuery] = useState(SAMPLE_QUERY);
+export function SqlEditorPage({ draft }: { draft?: SqlDraft | null }) {
+  const [query, setQuery] = useState(draft?.sql ?? SAMPLE_QUERY);
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connections, setConnections] = useState<DbConnection[]>([]);
-  const [selectedConnId, setSelectedConnId] = useState('');
+  const [selectedConnId, setSelectedConnId] = useState(draft?.connectionId ?? '');
   const [loadingConns, setLoadingConns] = useState(true);
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -104,6 +105,16 @@ export function SqlEditorPage() {
   }, [selectedConnId]);
 
   useEffect(() => { loadConnections(); }, [loadConnections]);
+
+  // A statement handed over from another page (e.g. Tables → "New Table", "Drop"…):
+  // pre-fill the editor, but never run it automatically.
+  useEffect(() => {
+    if (!draft) return;
+    setQuery(draft.sql);
+    setSelectedConnId(draft.connectionId);
+    setResult(null);
+    setError(null);
+  }, [draft]);
   useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const handleExecute = async () => {

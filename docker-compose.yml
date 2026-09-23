@@ -7,19 +7,26 @@ services:
       - dbhub-data:/app/data
     environment:
       - PORT=3002
+      - DATA_DIR=/app/data
+      # "localhost" / 127.0.0.1 typed in the Connect form would point at this container.
+      # It is redirected to the Docker host so databases installed on the VPS are reachable.
+      - DOCKER_HOST_ALIAS=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # No public port — nginx proxies to it internally
 
   dbhub:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_API_MODE: local
+        VITE_LOCAL_API_URL: /api
     container_name: dbhub-admin
     ports:
       - "8090:80"
     restart: unless-stopped
     depends_on:
       - dbhub-server
-    environment:
-      - VITE_API_MODE=local
-      - VITE_LOCAL_API_URL=/api
 
 volumes:
   dbhub-data:

@@ -39,6 +39,15 @@ That's it. Two containers start:
 - **dbhub-server** — Node.js API with SQLite (port 3002, internal only)
 - **dbhub-admin** — Nginx serving the frontend (port 8090, public)
 
+Every page of DBHub is backed by this API — nothing in the UI is sample data:
+- **Databases / Tables** — real connections, live schema, paginated real rows.
+- **Monitoring** — host CPU/RAM/disk sampled from the container, and live per-database status (connections, query rate, active queries) sampled from MySQL/MariaDB/PostgreSQL system views.
+- **Query History** — every query run from the SQL editor, logged with timing and status.
+- **Users & Permissions** — the real accounts and grants on each connected database (read-only; DBHub does not create or alter accounts).
+- **Backups** — real `mysqldump`-equivalent / `pg_dump`-equivalent SQL dumps, gzip-compressed, restorable, on a cron schedule, with optional upload to a local folder, WebDAV (Nextcloud/ownCloud/Synology) or S3-compatible storage (AWS S3, Backblaze B2, Wasabi, MinIO, R2…).
+- **Import / Export** — real SQL/CSV/JSON import and export against the selected database.
+- **Settings** — profile, notification webhooks (Slack/generic) and preferences, persisted on the server.
+
 Data is persisted in a Docker volume called `dbhub-data`. The SQLite file lives at `/app/data/dbhub.db` inside the server container.
 
 ### Where your data is stored
@@ -71,6 +80,16 @@ docker run --rm -v dbhub-data:/data -v $(pwd):/backup alpine tar czf /backup/dbh
 4. Click **Test Connection** to verify, then **Connect** to save
 
 The local server connects to your databases **directly** using real drivers (mysql2, pg). Queries execute against your real databases — no simulation.
+
+When you click **Connect**, DBHub saves the connection **and immediately connects** to it: the status becomes `online` (with the real table count and size) or stays `offline` with the reason shown under the name. Statuses are re-checked every time the Databases page is opened or refreshed, and each row has a **Re-check** button.
+
+**Database installed on the same VPS?** Inside Docker, `localhost` / `127.0.0.1` is redirected to the Docker host (`host.docker.internal`). The database must then accept connections from the Docker network:
+- MySQL/MariaDB: `bind-address = 0.0.0.0` (or the docker bridge IP) and a user allowed from `%` / `172.16.0.0/12`
+- PostgreSQL: `listen_addresses = '*'` and a matching line in `pg_hba.conf` (e.g. `host all all 172.16.0.0/12 scram-sha-256`)
+
+### Browsing tables
+
+**Tables** reads the live schema of the selected connection: tables and views with row count / size, columns, indexes and paginated rows (sortable, CSV export of the current page). Actions that change data or structure (New Table, Add Column, Drop, Optimize…) open the **SQL Editor** with a ready-made statement — nothing is executed until you press Run.
 
 ### Running queries
 
@@ -105,7 +124,7 @@ npm install
 npm run dev
 ```
 
-The frontend dev server proxies `/api` requests to `http://localhost:3001` automatically.
+The frontend dev server proxies `/api` requests to `http://localhost:3002` automatically.
 
 ---
 

@@ -208,9 +208,9 @@ export function Sparkline({ data, color = '#2563eb', width = 80, height = 24 }: 
 export function BarList({
   items,
 }: {
-  items: { label: string; value: number; color: string }[];
+  items: { label: string; value: number; color: string; valueLabel?: string }[];
 }) {
-  const max = Math.max(...items.map((i) => i.value));
+  const max = Math.max(...items.map((i) => i.value), 1);
   return (
     <div className="space-y-2.5">
       {items.map((item, i) => (
@@ -222,7 +222,7 @@ export function BarList({
               style={{ width: `${(item.value / max) * 100}%`, background: item.color }}
             />
           </div>
-          <span className="text-xs font-medium text-ink-700 w-16 text-right tabular-nums">{item.value} GB</span>
+          <span className="text-xs font-medium text-ink-700 w-16 text-right tabular-nums">{item.valueLabel ?? `${item.value} GB`}</span>
         </div>
       ))}
     </div>
