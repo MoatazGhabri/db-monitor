@@ -61,3 +61,63 @@ CREATE TABLE IF NOT EXISTS query_history (
 
 CREATE INDEX IF NOT EXISTS idx_qh_conn ON query_history(connection_id);
 CREATE INDEX IF NOT EXISTS idx_qh_time ON query_history(executed_at DESC);
+
+
+-- ---------- Platform settings (profile, notifications, preferences) ----------
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- ---------- Backups (real dump files produced by the platform) ----------
+CREATE TABLE IF NOT EXISTS backups (
+  id TEXT PRIMARY KEY,
+  connection_id TEXT REFERENCES db_connections(id) ON DELETE SET NULL,
+  connection_name TEXT NOT NULL DEFAULT '',
+  schedule_id TEXT REFERENCES backup_schedules(id) ON DELETE SET NULL,
+  drive_id TEXT REFERENCES cloud_drives(id) ON DELETE SET NULL,
+  filename TEXT NOT NULL,
+  local_path TEXT,
+  remote_name TEXT,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  tables_count INTEGER NOT NULL DEFAULT 0,
+  rows_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'running',
+  trigger_type TEXT NOT NULL DEFAULT 'manual',
+  error TEXT,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_backups_time ON backups(created_at DESC);
+
+-- ---------- Import / export jobs ----------
+CREATE TABLE IF NOT EXISTS io_jobs (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  connection_id TEXT REFERENCES db_connections(id) ON DELETE SET NULL,
+  connection_name TEXT NOT NULL DEFAULT '',
+  target TEXT NOT NULL DEFAULT '',
+  format TEXT NOT NULL DEFAULT '',
+  filename TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'running',
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  rows_count INTEGER NOT NULL DEFAULT 0,
+  statements_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_time ON io_jobs(created_at DESC);
+
+-- ---------- Saved SQL queries (SQL Editor sidebar) ----------
+CREATE TABLE IF NOT EXISTS saved_queries (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sql TEXT NOT NULL,
+  connection_id TEXT REFERENCES db_connections(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_queries_time ON saved_queries(created_at DESC);
