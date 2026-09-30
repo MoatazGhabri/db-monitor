@@ -1,7 +1,8 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Play, Save, Clock, CheckCircle2, AlertCircle, Copy, Download, Terminal, ChevronRight, Loader2, Server } from 'lucide-react';
+import { Play, Save, Clock, CheckCircle2, AlertCircle, Copy, Download, Terminal, ChevronRight, Loader2, Server, Trash2, X } from 'lucide-react';
 import { Card, Badge, Button, PageHeader } from '@/components/ui';
-import { fetchConnections, executeQuery, fetchQueryHistory, type DbConnection, type QueryResult, type QueryHistoryEntry } from '@/lib/api';
+import { fetchConnections, executeQuery, fetchQueryHistoryFull, fetchSavedQueries, createSavedQuery, deleteSavedQuery, type DbConnection, type QueryResult, type QueryHistoryEntryFull, type SavedQuery } from '@/lib/api';
+import type { SqlDraft } from '@/lib/sqlTemplates';
 
 const SQL_KEYWORDS = new Set([
   'SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE',
@@ -73,15 +74,17 @@ GROUP BY u.name, u.email
 ORDER BY revenue DESC
 LIMIT 100;`;
 
-export function SqlEditorPage() {
-  const [query, setQuery] = useState(SAMPLE_QUERY);
+export function SqlEditorPage({ draft }: { draft?: SqlDraft | null }) {
+  const [query, setQuery] = useState(draft?.sql ?? SAMPLE_QUERY);
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connections, setConnections] = useState<DbConnection[]>([]);
-  const [selectedConnId, setSelectedConnId] = useState('');
+  const [selectedConnId, setSelectedConnId] = useState(draft?.connectionId ?? '');
   const [loadingConns, setLoadingConns] = useState(true);
-  const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
+  const [history, setHistory] = useState<QueryHistoryEntryFull[]>([]);
+  const [saved, setSaved] = useState<SavedQuery[]>([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const highlighted = useMemo(() => highlightSQL(query), [query]);
@@ -96,15 +99,33 @@ export function SqlEditorPage() {
   }, [selectedConnId]);
 
   const loadHistory = useCallback(async () => {
-    if (!selectedConnId) return;
+    if (!selectedConnId) { setHistory([]); return; }
     try {
-      const data = await fetchQueryHistory(selectedConnId);
-      setHistory(data);
+      const data = await fetchQueryHistoryFull({ connectionId: selectedConnId, limit: 20 });
+      setHistory(data.queries);
     } catch { /* ignore */ }
   }, [selectedConnId]);
 
+  const loadSaved = useCallback(async () => {
+    try {
+      const data = await fetchSavedQueries();
+      setSaved(data.queries);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => { loadConnections(); }, [loadConnections]);
+
+  // A statement handed over from another page (e.g. Tables → "New Table", "Drop"…):
+  // pre-fill the editor, but never run it automatically.
+  useEffect(() => {
+    if (!draft) return;
+    setQuery(draft.sql);
+    setSelectedConnId(draft.connectionId);
+    setResult(null);
+    setError(null);
+  }, [draft]);
   useEffect(() => { loadHistory(); }, [loadHistory]);
+  useEffect(() => { loadSaved(); }, [loadSaved]);
 
   const handleExecute = async () => {
     if (!selectedConnId) { setError('Please select a database connection first'); return; }
@@ -147,7 +168,7 @@ export function SqlEditorPage() {
         subtitle="Write and execute queries with syntax highlighting"
         actions={
           <>
-            <Button variant="secondary" icon={<Save className="w-3.5 h-3.5" />}>Save</Button>
+            <Button variant="secondary" icon={<Save className="w-3.5 h-3.5" />} disabled={!query.trim()} onClick={() => setShowSaveModal(true)}>Save</Button>
             <Button variant="primary" icon={executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} onClick={handleExecute}>
               {executing ? 'Executing…' : 'Run Query'}
             </Button>
@@ -322,14 +343,96 @@ export function SqlEditorPage() {
               <h3 className="text-sm font-semibold text-ink-900">Saved Queries</h3>
             </div>
             <div className="divide-y divide-ink-50">
-              {['Top customers (30d)', 'Revenue by category', 'Daily active users', 'Slow queries audit'].map((q, i) => (
-                <button key={i} className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-ink-50/50 transition-colors text-left">
-                  <ChevronRight className="w-3.5 h-3.5 text-ink-300" />
-                  <span className="text-xs text-ink-600">{q}</span>
-                </button>
-              ))}
+              {saved.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-ink-400">No saved queries yet — write one and press Save</div>
+              ) : (
+                saved.map((sq) => (
+                  <div key={sq.id} className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-ink-50/50 transition-colors group">
+                    <button
+                      className="flex-1 flex items-center gap-2 text-left min-w-0"
+                      title={sq.sql}
+                      onClick={() => {
+                        setQuery(sq.sql);
+                        if (sq.connection_id && connections.some((c) => c.id === sq.connection_id)) setSelectedConnId(sq.connection_id);
+                      }}
+                    >
+                      <ChevronRight className="w-3.5 h-3.5 text-ink-300 shrink-0" />
+                      <span className="text-xs text-ink-600 truncate">{sq.name}</span>
+                    </button>
+                    <button
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-ink-300 hover:text-rose-600 shrink-0"
+                      title="Delete"
+                      onClick={async () => { await deleteSavedQuery(sq.id).catch(() => {}); loadSaved(); }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </Card>
+        </div>
+      </div>
+
+      {showSaveModal && (
+        <SaveQueryModal
+          sql={query}
+          connectionId={selectedConnId}
+          onClose={() => setShowSaveModal(false)}
+          onSaved={() => { setShowSaveModal(false); loadSaved(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SaveQueryModal({ sql, connectionId, onClose, onSaved }: {
+  sql: string; connectionId: string; onClose: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!name.trim()) { setError('Give the query a name'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await createSavedQuery({ name: name.trim(), sql, connectionId: connectionId || null });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+      <div className="absolute inset-0 bg-ink-950/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-pop w-full max-w-sm animate-slide-up">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-ink-100">
+          <div className="flex items-center gap-2"><Save className="w-4.5 h-4.5 text-blue-600" /><h3 className="text-sm font-semibold text-ink-900">Save Query</h3></div>
+          <button onClick={onClose} className="text-ink-400 hover:text-ink-700"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {error && <div className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-700">{error}</div>}
+          <div>
+            <label className="block text-xs font-medium text-ink-600 mb-1.5">Name</label>
+            <input
+              autoFocus
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+              placeholder="Top customers (30d)"
+              className="w-full text-sm bg-white border border-ink-200 rounded-lg px-3 py-2 text-ink-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+          <pre className="text-xs font-mono text-ink-400 bg-ink-50 rounded-lg p-2.5 max-h-24 overflow-y-auto whitespace-pre-wrap">{sql}</pre>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-ink-100">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={saving} icon={saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} onClick={save}>{saving ? 'Saving…' : 'Save'}</Button>
         </div>
       </div>
     </div>

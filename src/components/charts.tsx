@@ -208,9 +208,9 @@ export function Sparkline({ data, color = '#2563eb', width = 80, height = 24 }: 
 export function BarList({
   items,
 }: {
-  items: { label: string; value: number; color: string }[];
+  items: { label: string; value: number; color: string; valueLabel?: string }[];
 }) {
-  const max = Math.max(...items.map((i) => i.value));
+  const max = Math.max(...items.map((i) => i.value), 1);
   return (
     <div className="space-y-2.5">
       {items.map((item, i) => (
@@ -222,7 +222,7 @@ export function BarList({
               style={{ width: `${(item.value / max) * 100}%`, background: item.color }}
             />
           </div>
-          <span className="text-xs font-medium text-ink-700 w-16 text-right tabular-nums">{item.value} GB</span>
+          <span className="text-xs font-medium text-ink-700 w-16 text-right tabular-nums">{item.valueLabel ?? `${item.value} GB`}</span>
         </div>
       ))}
     </div>
@@ -234,15 +234,20 @@ export function DonutChart({
   data,
   size = 140,
   thickness = 18,
+  centerLabel,
+  formatValue,
 }: {
   data: { label: string; value: number; color: string }[];
   size?: number;
   thickness?: number;
+  centerLabel?: string;
+  formatValue?: (v: number) => string;
 }) {
   const total = data.reduce((s, d) => s + d.value, 0);
   const radius = 50 - thickness / 2;
   const circ = 2 * Math.PI * radius;
   let offset = 0;
+  const fmt = formatValue ?? ((v: number) => `${v} GB`);
 
   return (
     <div className="flex items-center gap-4">
@@ -268,8 +273,8 @@ export function DonutChart({
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-lg font-bold text-ink-900">{total.toFixed(0)}</span>
-          <span className="text-[10px] text-ink-400">GB total</span>
+          <span className="text-lg font-bold text-ink-900">{centerLabel ?? fmt(total)}</span>
+          {!centerLabel && <span className="text-[10px] text-ink-400">total</span>}
         </div>
       </div>
       <div className="space-y-1.5">
@@ -277,7 +282,7 @@ export function DonutChart({
           <div key={i} className="flex items-center gap-2 text-xs">
             <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: d.color }} />
             <span className="text-ink-600 truncate">{d.label}</span>
-            <span className="text-ink-400 ml-auto tabular-nums">{d.value} GB</span>
+            <span className="text-ink-400 ml-auto tabular-nums">{fmt(d.value)}</span>
           </div>
         ))}
       </div>

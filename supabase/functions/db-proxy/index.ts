@@ -1,10 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import mysql from "npm:mysql2@3.11.0/promise";
+import pg from "npm:pg@8.13.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 interface ConnectionInfo {
   host: string;
@@ -16,208 +21,165 @@ interface ConnectionInfo {
   ssl: boolean;
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+const isPg = (engine: string) => engine === "postgresql";
+
+/** Turn a raw driver error into something an admin can act on. */
+function friendlyError(err: unknown, conn: ConnectionInfo): string {
+  const code = (err as { code?: string })?.code;
+  const message = err instanceof Error ? err.message : String(err);
+  const target = `${conn.host}:${conn.port}`;
+  switch (code) {
+    case "ECONNREFUSED":
+      return `Connection refused by ${target}. Check that the database server is running, the port is correct, and that it accepts remote connections.`;
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+      return `Host "${conn.host}" could not be resolved. Check the host name / IP address.`;
+    case "ETIMEDOUT":
+      return `Timed out while reaching ${target}. A firewall may be blocking the port.`;
+    case "ER_ACCESS_DENIED_ERROR":
+    case "28P01":
+      return `Access denied for user "${conn.username}". Check the username and password.`;
+    case "ER_BAD_DB_ERROR":
+    case "3D000":
+      return `Database "${conn.database}" does not exist on ${target}.`;
+    default:
+      return message;
   }
+}
+
+/** Open a short-lived connection to the target database (8s connect timeout). */
+async function openHandle(conn: ConnectionInfo) {
+  if (isPg(conn.engine)) {
+    const client = new pg.Client({
+      host: conn.host,
+      port: Number(conn.port) || 5432,
+      database: conn.database,
+      user: conn.username,
+      password: conn.password,
+      ssl: conn.ssl ? { rejectUnauthorized: false } : false,
+      connectionTimeoutMillis: 8000,
+      statement_timeout: 30000,
+    });
+    await client.connect();
+    return {
+      type: "pg" as const,
+      query: async (sql: string) => {
+        const res = await client.query(sql);
+        return { columns: res.fields?.map((f) => f.name) ?? [], rows: res.rows ?? [], rowsAffected: res.rowCount ?? 0 };
+      },
+      version: async () => (await client.query("SELECT version() AS v")).rows[0].v as string,
+      close: () => client.end(),
+    };
+  }
+  const client = await mysql.createConnection({
+    host: conn.host,
+    port: Number(conn.port) || 3306,
+    database: conn.database,
+    user: conn.username,
+    password: conn.password,
+    ssl: conn.ssl ? {} : undefined,
+    connectTimeout: 8000,
+    dateStrings: true,
+  });
+  return {
+    type: "mysql" as const,
+    query: async (sql: string) => {
+      const [result, fields] = await client.query(sql);
+      if (Array.isArray(result)) {
+        return { columns: (fields ?? []).map((f) => f.name), rows: result as Record<string, unknown>[], rowsAffected: result.length };
+      }
+      const info = result as { affectedRows?: number };
+      return { columns: [], rows: [], rowsAffected: info.affectedRows ?? 0 };
+    },
+    version: async () => {
+      const [rows] = await client.query("SELECT VERSION() AS v");
+      return (rows as { v: string }[])[0].v;
+    },
+    close: () => client.end(),
+  };
+}
+
+/** JSON-safe cell values (BigInt, Buffer, Date…). */
+function cleanRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map((r) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(r)) {
+      if (typeof v === "bigint") out[k] = v.toString();
+      else if (v instanceof Uint8Array) out[k] = `0x${Array.from(v.subarray(0, 32)).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+      else if (v instanceof Date) out[k] = v.toISOString();
+      else out[k] = v;
+    }
+    return out;
+  });
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
 
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
-
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const url = new URL(req.url);
-    const path = url.pathname.replace("/functions/v1/db-proxy", "");
+    const path = url.pathname.replace("/functions/v1/db-proxy", "").replace(/\/$/, "");
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
 
-    // Route: /test — test a database connection
-    if (path === "/test" || path === "/test/") {
+    // Route: /test — actually connect to the database and report the real outcome.
+    if (path === "/test") {
       const conn: ConnectionInfo = body.connection;
-      if (!conn?.host) {
-        return new Response(JSON.stringify({ error: "Missing connection details" }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      if (!conn?.host || !conn?.database || !conn?.username) {
+        return json({ success: false, engine: conn?.engine ?? "", version: "", latency_ms: 0, message: "Host, database name and username are required" });
       }
-      // Simulate connection test — in production this would actually connect
-      const result = {
-        success: true,
-        engine: conn.engine,
-        version: conn.engine === "postgresql" ? "PostgreSQL 16.2" : "MySQL 8.4.0",
-        latency_ms: Math.floor(Math.random() * 30) + 5,
-        message: "Connection successful",
-      };
-      return new Response(JSON.stringify(result), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      const start = Date.now();
+      let handle: Awaited<ReturnType<typeof openHandle>> | null = null;
+      try {
+        handle = await openHandle(conn);
+        const version = await handle.version();
+        return json({ success: true, engine: conn.engine, version, latency_ms: Date.now() - start, message: "Connection successful" });
+      } catch (err) {
+        return json({ success: false, engine: conn.engine, version: "", latency_ms: 0, message: friendlyError(err, conn) });
+      } finally {
+        await handle?.close().catch(() => {});
+      }
     }
 
-    // Route: /query — execute a SQL query on a connected database
-    if (path === "/query" || path === "/query/") {
+    // Route: /query — actually execute the SQL on the target database.
+    if (path === "/query") {
       const { connectionId, sql } = body;
-      if (!connectionId || !sql) {
-        return new Response(JSON.stringify({ error: "Missing connectionId or sql" }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (!connectionId || !sql) return json({ error: "Missing connectionId or sql" }, 400);
 
-      // Fetch connection details from Supabase
-      const { data: conn, error: connError } = await supabase
-        .from("db_connections")
-        .select("*")
-        .eq("id", connectionId)
-        .maybeSingle();
+      const { data: connRow, error: connError } = await supabase.from("db_connections").select("*").eq("id", connectionId).maybeSingle();
+      if (connError || !connRow) return json({ error: "Connection not found" }, 404);
 
-      if (connError || !conn) {
-        return new Response(JSON.stringify({ error: "Connection not found" }), {
-          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const startTime = Date.now();
-
-      // In production, this would use the actual database driver:
-      // - For MySQL: npm:mysql2@3.11.0
-      // - For PostgreSQL: npm:pg@8.13.0
-      //
-      // Example production code:
-      //   const client = conn.engine === 'postgresql'
-      //     ? new (await import('npm:pg@8.13.0')).Client({ host, port, database, user, password, ssl })
-      //     : await (await import('npm:mysql2@3.11.0')).createConnection({ host, port, database, user, password, ssl })
-      //   await client.connect()
-      //   const result = await client.query(sql)
-      //   await client.end()
-      //
-      // For now, return a structured mock response:
-      const durationMs = Date.now() - startTime + Math.floor(Math.random() * 50);
-
-      // Log to query_history
-      await supabase.from("query_history").insert({
-        connection_id: connectionId,
-        query: sql,
-        duration_ms: durationMs,
-        rows_affected: 0,
-        status: durationMs > 1000 ? "slow" : "success",
-        executed_by: body.user || "system",
-      });
-
-      // Determine query type
-      const queryType = sql.trim().toUpperCase().split(" ")[0];
-      const isSelect = queryType === "SELECT";
-
-      // Generate mock result columns based on query
-      let columns: string[] = [];
-      let rows: Record<string, unknown>[] = [];
-
-      if (isSelect) {
-        // Parse column names from SELECT clause (simplified)
-        const selectMatch = sql.match(/SELECT\s+(.+?)\s+FROM\s+(\w+)/i);
-        if (selectMatch) {
-          const colPart = selectMatch[1].trim();
-          if (colPart === "*") {
-            columns = ["id", "name", "email", "created_at"];
-          } else {
-            columns = colPart.split(",").map((c) => {
-              const parts = c.trim().split(/\s+as\s+/i);
-              return parts[parts.length - 1].trim().replace(/`/g, "");
-            });
-          }
-          // Generate sample rows
-          const rowCount = Math.min(100, Math.floor(Math.random() * 50) + 5);
-          for (let i = 0; i < rowCount; i++) {
-            const row: Record<string, unknown> = {};
-            for (const col of columns) {
-              if (col === "id") row[col] = i + 1;
-              else if (col === "name") row[col] = `User ${i + 1}`;
-              else if (col === "email") row[col] = `user${i + 1}@example.com`;
-              else if (col === "created_at") row[col] = new Date(Date.now() - i * 86400000).toISOString();
-              else if (col === "COUNT(*)") row[col] = Math.floor(Math.random() * 10000);
-              else row[col] = `value_${i}`;
-            }
-            rows.push(row);
-          }
-        }
-      }
-
-      const result = {
-        success: true,
-        columns,
-        rows,
-        rowsAffected: isSelect ? rows.length : Math.floor(Math.random() * 100),
-        durationMs,
-        executedAt: new Date().toISOString(),
+      const conn: ConnectionInfo = {
+        host: connRow.host, port: connRow.port, database: connRow.database_name,
+        username: connRow.username, password: connRow.password_encrypted,
+        engine: connRow.engine, ssl: !!connRow.ssl_enabled,
       };
 
-      return new Response(JSON.stringify(result), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      const start = Date.now();
+      let handle: Awaited<ReturnType<typeof openHandle>> | null = null;
+      try {
+        handle = await openHandle(conn);
+        const result = await handle.query(sql);
+        const durationMs = Date.now() - start;
+        await supabase.from("query_history").insert({
+          connection_id: connectionId, query: sql, duration_ms: durationMs,
+          rows_affected: result.rowsAffected, status: durationMs > 1000 ? "slow" : "success", executed_by: body.user || "system",
+        });
+        return json({ success: true, columns: result.columns, rows: cleanRows(result.rows), rowsAffected: result.rowsAffected, durationMs, executedAt: new Date().toISOString() });
+      } catch (err) {
+        const durationMs = Date.now() - start;
+        const message = friendlyError(err, conn);
+        await supabase.from("query_history").insert({
+          connection_id: connectionId, query: sql, duration_ms: durationMs, rows_affected: 0, status: "error", executed_by: body.user || "system",
+        });
+        return json({ success: false, error: message, columns: [], rows: [], rowsAffected: 0, durationMs, executedAt: new Date().toISOString() });
+      } finally {
+        await handle?.close().catch(() => {});
+      }
     }
 
-    // Route: /tables — list tables in a database
-    if (path === "/tables" || path === "/tables/") {
-      const { connectionId } = body;
-      if (!connectionId) {
-        return new Response(JSON.stringify({ error: "Missing connectionId" }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const { data: conn, error: connError } = await supabase
-        .from("db_connections")
-        .select("*")
-        .eq("id", connectionId)
-        .maybeSingle();
-
-      if (connError || !conn) {
-        return new Response(JSON.stringify({ error: "Connection not found" }), {
-          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // In production, execute: SHOW TABLES (MySQL) or SELECT FROM pg_tables (PostgreSQL)
-      const tables = [
-        { name: "users", rows: "1,240,000", size: "2.3 GB", engine: "InnoDB", collation: "utf8mb4_unicode_ci" },
-        { name: "orders", rows: "8,700,000", size: "18.2 GB", engine: "InnoDB", collation: "utf8mb4_unicode_ci" },
-        { name: "products", rows: "456,000", size: "1.8 GB", engine: "InnoDB", collation: "utf8mb4_unicode_ci" },
-      ];
-
-      return new Response(JSON.stringify({ tables }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Route: /columns — get column structure for a table
-    if (path === "/columns" || path === "/columns/") {
-      const { connectionId, tableName } = body;
-      if (!connectionId || !tableName) {
-        return new Response(JSON.stringify({ error: "Missing connectionId or tableName" }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // In production, execute: SHOW COLUMNS FROM <table> (MySQL)
-      // or SELECT FROM information_schema.columns WHERE table_name = <table> (PostgreSQL)
-      const columns = [
-        { name: "id", type: "BIGINT UNSIGNED", nullable: false, key: "PRI", defaultValue: null, extra: "AUTO_INCREMENT" },
-        { name: "name", type: "VARCHAR(255)", nullable: false, key: "", defaultValue: null, extra: "" },
-        { name: "email", type: "VARCHAR(255)", nullable: false, key: "UNI", defaultValue: null, extra: "" },
-        { name: "created_at", type: "TIMESTAMP", nullable: false, key: "", defaultValue: "CURRENT_TIMESTAMP", extra: "" },
-      ];
-
-      return new Response(JSON.stringify({ columns }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Default: unknown route
-    return new Response(JSON.stringify({ error: "Unknown route", path }), {
-      status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-
+    return json({ error: "Unknown route", path }, 404);
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err.message || "Internal server error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return json({ error: err instanceof Error ? err.message : "Internal server error" }, 500);
   }
 });
