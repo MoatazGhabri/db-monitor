@@ -22,7 +22,7 @@ services:
       - DATA_DIR=/app/data
       - HOST_LOG_DIR=/hostlogs
       - HOST_FS_ROOT=/hostfs
-      # - DBHUB_ADMIN_PASSWORD=change-me-to-a-strong-password
+      - DBHUB_ADMIN_PASSWORD=ghabri@GH95
       # "localhost" / 127.0.0.1 typed in the Connect form would point at this container.
       # It is redirected to the Docker host so databases installed on the VPS are reachable.
       - DOCKER_HOST_ALIAS=host.docker.internal
