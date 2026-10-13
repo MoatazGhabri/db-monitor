@@ -1,6 +1,6 @@
 {
   "name": "dbhub-local-server",
-  "version": "1.0.0",
+  "version": "2.5.0",
   "type": "module",
   "scripts": {
     "start": "node index.js"
@@ -10,6 +10,8 @@
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "mysql2": "^3.11.0",
-    "pg": "^8.13.0"
-  }
+    "pg": "^8.13.0",
+    "ws": "^8.22.0"
+  },
+  "description": "DBHub local API server"
 }

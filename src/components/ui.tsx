@@ -67,9 +67,11 @@ type ButtonProps = {
   icon?: ReactNode;
   onClick?: () => void;
   className?: string;
+  disabled?: boolean;
+  title?: string;
 };
 
-export function Button({ children, variant = 'secondary', size = 'md', icon, onClick, className = '' }: ButtonProps) {
+export function Button({ children, variant = 'secondary', size = 'md', icon, onClick, className = '', disabled = false, title }: ButtonProps) {
   const variants = {
     primary: 'bg-blue-600 text-white hover:bg-blue-700 shadow-soft',
     secondary: 'bg-white text-ink-700 border border-ink-200 hover:bg-ink-50 hover:border-ink-300',
@@ -80,7 +82,9 @@ export function Button({ children, variant = 'secondary', size = 'md', icon, onC
   return (
     <button
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-lg font-medium transition-all duration-150 active:scale-[.98] ${variants[variant]} ${sizes[size]} ${className}`}
+      disabled={disabled}
+      title={title}
+      className={`inline-flex items-center gap-1.5 rounded-lg font-medium transition-all duration-150 active:scale-[.98] disabled:opacity-50 disabled:pointer-events-none ${variants[variant]} ${sizes[size]} ${className}`}
     >
       {icon}
       {children}

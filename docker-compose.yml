@@ -5,21 +5,43 @@ services:
     restart: unless-stopped
     volumes:
       - dbhub-data:/app/data
+      # --- Serveur & Stockage (optionnel mais recommandé) ---
+      # Permet à DBHub d'analyser et de nettoyer Docker via des boutons (aucune commande shell exposée).
+      # Sans ce montage, la page "Serveur & Stockage" affiche simplement que Docker n'est pas accessible.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Logs de l'hôte : permet d'analyser et de supprimer UNIQUEMENT les logs déjà archivés (.1, .2.gz, .old…).
+      - /var/log:/hostlogs
+      # Gestionnaire de fichiers (optionnel) : accès complet en lecture/écriture au disque de
+      # l'hôte et aux dossiers de chaque conteneur, protégé par son propre mot de passe
+      # (DBHUB_ADMIN_PASSWORD ci-dessous). Sans mot de passe défini, la fonctionnalité reste
+      # désactivée. Donner ce montage revient à donner un accès root au serveur : à n'activer
+      # que sur une machine de confiance, avec un mot de passe fort et dédié.
+      - /:/hostfs
     environment:
       - PORT=3002
+      - DATA_DIR=/app/data
+      - HOST_LOG_DIR=/hostlogs
+      - HOST_FS_ROOT=/hostfs
+      # - DBHUB_ADMIN_PASSWORD=change-me-to-a-strong-password
+      # "localhost" / 127.0.0.1 typed in the Connect form would point at this container.
+      # It is redirected to the Docker host so databases installed on the VPS are reachable.
+      - DOCKER_HOST_ALIAS=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # No public port — nginx proxies to it internally
 
   dbhub:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_API_MODE: local
+        VITE_LOCAL_API_URL: /api
     container_name: dbhub-admin
     ports:
       - "8090:80"
     restart: unless-stopped
     depends_on:
       - dbhub-server
-    environment:
-      - VITE_API_MODE=local
-      - VITE_LOCAL_API_URL=/api
 
 volumes:
   dbhub-data:
